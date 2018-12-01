@@ -23,9 +23,11 @@ function vectorSize (someVector) {
 
 function Transaction () {
   this.version = 1
+  this.type = 0
   this.locktime = 0
   this.ins = []
   this.outs = []
+  this.extrapayload = []
 }
 
 Transaction.DEFAULT_SEQUENCE = 0xffffffff
@@ -59,9 +61,9 @@ Transaction.fromBuffer = function (buffer, __noStrict) {
     return i
   }
 
-  function readInt32 () {
-    const i = buffer.readInt32LE(offset)
-    offset += 4
+  function readInt16 () {
+    const i = buffer.readInt16LE(offset)
+    offset += 2
     return i
   }
 
@@ -89,7 +91,8 @@ Transaction.fromBuffer = function (buffer, __noStrict) {
   }
 
   const tx = new Transaction()
-  tx.version = readInt32()
+  tx.version = readInt16()
+  tx.type = readInt16()
 
   const marker = buffer.readUInt8(offset)
   const flag = buffer.readUInt8(offset + 1)
@@ -130,6 +133,10 @@ Transaction.fromBuffer = function (buffer, __noStrict) {
   }
 
   tx.locktime = readUInt32()
+
+  if (tx.version === 3) {
+    tx.extrapayload = readVarSlice()
+  }
 
   if (__noStrict) return tx
   if (offset !== buffer.length) throw new Error('Transaction has unexpected data')
@@ -214,13 +221,15 @@ Transaction.prototype.__byteLength = function (__allowWitness) {
     varuint.encodingLength(this.outs.length) +
     this.ins.reduce(function (sum, input) { return sum + 40 + varSliceSize(input.script) }, 0) +
     this.outs.reduce(function (sum, output) { return sum + 8 + varSliceSize(output.script) }, 0) +
-    (hasWitnesses ? this.ins.reduce(function (sum, input) { return sum + vectorSize(input.witness) }, 0) : 0)
+    (hasWitnesses ? this.ins.reduce(function (sum, input) { return sum + vectorSize(input.witness) }, 0) : 0) +
+    (this.version === 3 ? varSliceSize(this.extrapayload) : 0)
   )
 }
 
 Transaction.prototype.clone = function () {
   const newTx = new Transaction()
   newTx.version = this.version
+  newTx.type = this.type
   newTx.locktime = this.locktime
 
   newTx.ins = this.ins.map(function (txIn) {
@@ -239,6 +248,8 @@ Transaction.prototype.clone = function () {
       value: txOut.value
     }
   })
+
+  newTx.extrapayload = this.extrapayload
 
   return newTx
 }
@@ -422,7 +433,7 @@ Transaction.prototype.__toBuffer = function (buffer, initialOffset, __allowWitne
   function writeSlice (slice) { offset += slice.copy(buffer, offset) }
   function writeUInt8 (i) { offset = buffer.writeUInt8(i, offset) }
   function writeUInt32 (i) { offset = buffer.writeUInt32LE(i, offset) }
-  function writeInt32 (i) { offset = buffer.writeInt32LE(i, offset) }
+  function writeInt16 (i) { offset = buffer.writeInt16LE(i, offset) }
   function writeUInt64 (i) { offset = bufferutils.writeUInt64LE(buffer, i, offset) }
   function writeVarInt (i) {
     varuint.encode(i, buffer, offset)
@@ -431,7 +442,8 @@ Transaction.prototype.__toBuffer = function (buffer, initialOffset, __allowWitne
   function writeVarSlice (slice) { writeVarInt(slice.length); writeSlice(slice) }
   function writeVector (vector) { writeVarInt(vector.length); vector.forEach(writeVarSlice) }
 
-  writeInt32(this.version)
+  writeInt16(this.version)
+  writeInt16(this.type)
 
   const hasWitnesses = __allowWitness && this.hasWitnesses()
 
@@ -467,6 +479,10 @@ Transaction.prototype.__toBuffer = function (buffer, initialOffset, __allowWitne
   }
 
   writeUInt32(this.locktime)
+
+  if (this.version === 3) {
+    writeVarSlice(this.extrapayload)
+  }
 
   // avoid slicing unless necessary
   if (initialOffset !== undefined) return buffer.slice(initialOffset, offset)

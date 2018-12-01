@@ -8,6 +8,7 @@ describe('Transaction', function () {
   function fromRaw (raw, noWitness) {
     const tx = new Transaction()
     tx.version = raw.version
+    tx.type = raw.type
     tx.locktime = raw.locktime
 
     raw.ins.forEach(function (txIn, i) {
@@ -42,6 +43,10 @@ describe('Transaction', function () {
 
       tx.addOutput(script, txOut.value)
     })
+
+    if (tx.version === 3) {
+      tx.extrapayload = Buffer.from(raw.extrapayload, 'hex')
+    }
 
     return tx
   }
